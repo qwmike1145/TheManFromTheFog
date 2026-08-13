@@ -1,0 +1,8 @@
+<map>
+    <int name="theme_color" value="-9601601" />
+    <boolean name="fullscreen" value="true" />
+    <int name="theme_color2_dark" value="-9601601" />
+    <int name="animation_speed" value="7" />
+    <boolean name="close_skin_model" value="false" />
+    <int name="theme_color2" value="-9601601" />
+</map>

@@ -1,0 +1,10 @@
+{
+  "com.fcl.plugin.mobileglues": {
+    "des": "MobileGlues",
+    "renderer": "MobileGlues:libmobileglues.so:libmobileglues.so",
+    "boatEnv": "LIBGL_ES=3:DLOPEN=libspirv-cross-c-shared.so",
+    "pojavEnv": "LIBGL_ES=3:DLOPEN=libspirv-cross-c-shared.so:POJAV_RENDERER=opengles3:POJAVEXEC_EGL=libmobileglues.so:LIBGL_EGL=libmobileglues.so",
+    "minMCVer": "1.17",
+    "maxMCVer": ""
+  }
+}

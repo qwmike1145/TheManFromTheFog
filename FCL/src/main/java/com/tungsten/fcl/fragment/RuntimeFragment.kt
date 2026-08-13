@@ -1,0 +1,283 @@
+package com.tungsten.fcl.fragment
+
+import android.content.Context.MODE_PRIVATE
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.appcompat.content.res.AppCompatResources
+import androidx.lifecycle.lifecycleScope
+import com.tungsten.fcl.R
+import com.tungsten.fcl.activity.SplashActivity
+import com.tungsten.fcl.databinding.FragmentRuntimeBinding
+import com.tungsten.fcl.util.AndroidUtils.*
+import com.tungsten.fcl.util.InstallResources
+import com.tungsten.fcl.util.RuntimeUtils
+import com.tungsten.fclauncher.utils.Architecture
+import com.tungsten.fclauncher.utils.FCLPath
+import com.tungsten.fclauncher.utils.FCLPath.DK_BACKGROUND_PATH
+import com.tungsten.fclauncher.utils.FCLPath.LT_BACKGROUND_PATH
+import com.tungsten.fclcore.task.Schedulers
+import com.tungsten.fcllibrary.component.FCLFragment
+import com.tungsten.fcllibrary.component.theme.Theme
+import com.tungsten.fcllibrary.component.theme.ThemeEngine
+import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
+
+class RuntimeFragment : FCLFragment(), View.OnClickListener {
+    private lateinit var bind: FragmentRuntimeBinding
+    var gameFiles = false
+    var configFiles = false
+    var lwjgl = false
+    var cacio17 = false
+    var java17 = false
+    var jna = false
+
+    private val sharedPreferences = FCLPath.CONTEXT.getSharedPreferences("launcher", MODE_PRIVATE)
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View? {
+        val view = inflater.inflate(R.layout.fragment_runtime, container, false)
+        bind = FragmentRuntimeBinding.bind(view)
+        bind.install.setOnClickListener(this)
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { initState() }
+            refreshDrawables()
+            check()
+        }
+        return view
+    }
+
+    private fun initState() {
+        gameFiles = (activity as SplashActivity).gameFiles
+        configFiles = (activity as SplashActivity).configFiles
+        lwjgl = (activity as SplashActivity).lwjgl
+        cacio17 = (activity as SplashActivity).cacio17
+        java17 = (activity as SplashActivity).java17
+        jna = (activity as SplashActivity).jna
+    }
+
+    private fun refreshDrawables() {
+        if (context != null) {
+            val stateUpdate =
+                AppCompatResources.getDrawable(requireContext(), R.drawable.ic_baseline_update_24)
+            val stateDone =
+                AppCompatResources.getDrawable(requireContext(), R.drawable.ic_baseline_done_24)
+
+            bind.apply {
+                gameFileState.setBackgroundDrawable(if (gameFiles) stateDone else stateUpdate)
+                configFileState.setBackgroundDrawable(if (configFiles) stateDone else stateUpdate)
+                lwjglState.setBackgroundDrawable(if (lwjgl) stateDone else stateUpdate)
+                cacio17State.setBackgroundDrawable(if (cacio17) stateDone else stateUpdate)
+                java17State.setBackgroundDrawable(if (java17) stateDone else stateUpdate)
+                jnaState.setBackgroundDrawable(if (jna) stateDone else stateUpdate)
+            }
+        }
+    }
+
+    private val isLatest: Boolean
+        get() = gameFiles && configFiles && lwjgl && cacio17 && java17 && jna
+
+    private fun check() {
+        if (isLatest) {
+            (activity as SplashActivity).enterLauncher()
+        }
+    }
+
+    private var installing = false
+    private val showErrDialog = AtomicBoolean(false)
+
+    private fun install() {
+        if (installing) return
+
+        bind.apply {
+            val installResources = InstallResources(context)
+            installing = true
+            showErrDialog.set(false)
+            if (!gameFiles) {
+                gameFileState.visibility = View.GONE
+                gameFilesProgress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            installResources.installGameFiles((activity as SplashActivity).oldSelectedPath, ".minecraft", sharedPreferences.edit(), context)
+                            gameFiles = true
+                        }.onFailure {
+                            it.printStackTrace()
+                            if (showErrDialog.compareAndSet(false, true)) {
+                                withContext(Dispatchers.Main) {
+                                    showErrorDialog(activity, it.message, true)
+                                }
+                            }
+                        }
+                    }
+                    gameFileState.visibility = View.VISIBLE
+                    gameFilesProgress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+
+            if (!configFiles) {
+                configFileState.visibility = View.GONE
+                configFilesProgress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            installResources.installConfigFiles(context)
+                            configFiles = true
+                        }.onFailure {
+                            it.printStackTrace()
+                            if (showErrDialog.compareAndSet(false, true)) {
+                                withContext(Dispatchers.Main) {
+                                    showErrorDialog(activity, it.message, true)
+                                }
+                            }
+                        }
+                    }
+                    if(installResources.isSuccess) ThemeEngine.getInstance().applyAndSave(activity, bind.root, LT_BACKGROUND_PATH, DK_BACKGROUND_PATH)
+                    configFileState.visibility = View.VISIBLE
+                    configFilesProgress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+            if (!lwjgl) {
+                lwjglState.visibility = View.GONE
+                lwjglProgress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            RuntimeUtils.install(context, FCLPath.LWJGL_DIR, "app_runtime/lwjgl")
+                            lwjgl = true
+                        }
+                    }
+                    lwjglState.visibility = View.VISIBLE
+                    lwjglProgress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+            if (!cacio17) {
+                cacio17State.visibility = View.GONE
+                cacio17Progress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            RuntimeUtils.install(
+                                context,
+                                FCLPath.CACIOCAVALLO_17_DIR,
+                                "app_runtime/caciocavallo17"
+                            )
+                            cacio17 = true
+                        }
+                    }
+                    cacio17State.visibility = View.VISIBLE
+                    cacio17Progress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+            if (!java17) {
+                java17State.visibility = View.GONE
+                java17Progress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            RuntimeUtils.installJava(
+                                context,
+                                FCLPath.JAVA_17_PATH,
+                                "app_runtime/java/jre17"
+                            )
+                            java17 = true
+                        }.exceptionOrNull()?.let { showErrorDialog(it.toString()) }
+                    }
+                    java17State.visibility = View.VISIBLE
+                    java17Progress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+            if (!jna) {
+                jnaState.visibility = View.GONE
+                jnaProgress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            RuntimeUtils.installJna(
+                                context,
+                                FCLPath.JNA_PATH,
+                                "app_runtime/jna"
+                            )
+                            jna = true
+                        }
+                    }
+                    jnaState.visibility = View.VISIBLE
+                    jnaProgress.visibility = View.GONE
+                    refreshDrawables()
+                    check()
+                }
+            }
+        }
+    }
+
+    override fun onClick(view: View) {
+        if (view === bind.install) {
+            val deviceArch = Architecture.archAsString(Architecture.getDeviceArchitecture())
+            if (!isJavaArchSupported(deviceArch)) {
+                showErrorDialog(
+                    getString(
+                        R.string.missing_runtime_arch_files,
+                        deviceArch,
+                        "TMFTF-release-x.x.x.x-$deviceArch.apk",
+                        "TMFTF-release-x.x.x.x-all.apk"
+                    )
+                )
+                return
+            }
+            install()
+        }
+    }
+
+    private fun isJavaArchSupported(arch: String): Boolean {
+        try {
+            val javaDirs = listOf("jre17")
+            val assetManager = requireContext().assets
+            var supportedCount = 0
+            for (javaDir in javaDirs) {
+                val dirPath = "app_runtime/java/$javaDir"
+                val files = assetManager.list(dirPath)
+                if (files != null) {
+                    val expectedFile = "bin-$arch.tar.xz"
+                    if (files.contains(expectedFile)) {
+                        supportedCount++
+                    }
+                }
+            }
+            return supportedCount > 0
+        } catch (e: Exception) {
+            showErrorDialog(e.toString())
+            return false
+        }
+    }
+
+    private fun showErrorDialog(message: String) {
+        installing = false
+        lifecycleScope.launch(Dispatchers.Main) {
+            FCLAlertDialog.Builder(requireContext())
+                .setMessage(message)
+                .setPositiveButton {
+                }
+                .create()
+                .show()
+        }
+    }
+}

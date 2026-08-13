@@ -1,0 +1,282 @@
+package com.tungsten.fcl.activity
+
+import android.Manifest.permission
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.app.ActivityCompat
+import androidx.core.app.ActivityOptionsCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.core.net.toUri
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
+import com.mio.JavaManager
+import com.mio.manager.RendererManager
+import com.mio.util.ImageUtil
+import com.tungsten.fcl.R
+import com.tungsten.fcl.fragment.EulaFragment
+import com.tungsten.fcl.fragment.RuntimeFragment
+import com.tungsten.fcl.setting.ConfigHolder
+import com.tungsten.fcl.util.AndroidUtils
+import com.tungsten.fcl.util.RuntimeUtils
+import com.tungsten.fclauncher.utils.FCLPath
+import com.tungsten.fclcore.util.Logging
+import com.tungsten.fclcore.util.io.FileUtils
+import com.tungsten.fcllibrary.component.FCLActivity
+import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog
+import com.tungsten.fcllibrary.component.theme.ThemeEngine
+import com.tungsten.fcllibrary.util.LocaleUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.nio.file.Paths
+import java.util.Locale
+import java.util.logging.Level
+import com.tungsten.fcl.setting.ConfigHolder.*
+import com.tungsten.fcl.util.AndroidUtils.showErrorDialog
+import com.tungsten.fcl.util.check.FileFormat
+import com.tungsten.fclauncher.utils.FCLPath.GENERAL_SETTING
+import com.tungsten.fcllibrary.component.dialog.FCLWaitDialog
+
+@SuppressLint("CustomSplashScreen")
+class SplashActivity : FCLActivity() {
+
+    var gameFiles: Boolean = false
+    var configFiles: Boolean = false
+    var lwjgl: Boolean = false
+    var cacio17: Boolean = false
+    var java17: Boolean = false
+    var jna: Boolean = false
+    private lateinit var sharedPreferences: SharedPreferences
+    val oldSelectedPath: String = getSelectedPath(initTempConfig()).absolutePath
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        installSplashScreen()
+        setContentView(R.layout.activity_splash)
+        sharedPreferences = getSharedPreferences("launcher", MODE_PRIVATE)
+        val background = findViewById<ConstraintLayout>(R.id.background)
+        ImageUtil.loadInto(
+            background,
+            ThemeEngine.getInstance().getTheme().getBackground(this)
+        )
+        if (sharedPreferences.getBoolean("isAgree", false)) {
+            checkPermission()
+        } else {
+            FCLAlertDialog.Builder(this).apply {
+                setCancelable(false)
+                setAlertLevel(FCLAlertDialog.AlertLevel.ALERT)
+                setMessage(getString(R.string.splash_agreement))
+                setPositiveButton {
+                    sharedPreferences.edit { putBoolean("isAgree", true) }
+                    checkPermission()
+                }
+                setNegativeButton(getString(com.tungsten.fcllibrary.R.string.crash_reporter_close)) { finish() }
+                create().show()
+            }
+        }
+    }
+
+    private fun checkPermission() {
+        if (hasPermission()) {
+            init()
+            return
+        }
+        FCLAlertDialog.Builder(this).apply {
+            setCancelable(false)
+            setAlertLevel(FCLAlertDialog.AlertLevel.ALERT)
+            setMessage(getString(R.string.splash_permission_msg))
+            setPositiveButton { requestPermission() }
+            setNegativeButton { finish() }
+            create().show()
+        }
+    }
+
+    private fun init() {
+        lifecycleScope.launch {
+            async(Dispatchers.IO) {
+                FCLPath.loadPaths(this@SplashActivity)
+                Logging.start(Paths.get(FCLPath.LOG_DIR))
+                initState()
+            }.await()
+            if (gameFiles && configFiles && lwjgl && cacio17 && java17 && jna) {
+                enterLauncher()
+            } else {
+                start()
+            }
+        }
+    }
+
+    fun start() {
+        if (sharedPreferences.getBoolean("isFirstLaunch", true)) {
+            supportFragmentManager.beginTransaction()
+                .setCustomAnimations(R.anim.frag_start_anim, R.anim.frag_stop_anim)
+                .replace(R.id.fragment, EulaFragment::class.java, null).commit()
+        } else {
+            lifecycleScope.launch {
+                val waitDialog = FCLWaitDialog.Builder(this@SplashActivity)
+                    .setMessage("正在检测内部文件格式中，请稍等…")
+                    .setCancelable(false)
+                    .create()
+                    .showDialog()
+                try {
+                    withContext(Dispatchers.IO) {
+                        FileFormat().checkFiles()
+                    }
+                    waitDialog?.dismiss()
+                    supportFragmentManager.beginTransaction()
+                        .setCustomAnimations(R.anim.frag_start_anim, R.anim.frag_stop_anim)
+                        .replace(R.id.fragment, RuntimeFragment::class.java, null).commit()
+                }catch(e: Exception) {
+                    waitDialog?.dismiss()
+                    showErrorDialog(this@SplashActivity, e.message, false)
+                }
+            }
+        }
+    }
+
+    fun enterLauncher() {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                RendererManager.init(this@SplashActivity)
+                JavaManager.init()
+                runCatching { ConfigHolder.init() }.exceptionOrNull()?.let {
+                    Logging.LOG.log(Level.WARNING, it.message)
+                }
+            }
+            startActivity(
+                handleModpack(Intent(this@SplashActivity, MainActivity::class.java)),
+                ActivityOptionsCompat.makeCustomAnimation(this@SplashActivity, 0, 0).toBundle()
+            )
+            finish()
+        }
+    }
+
+    private fun handleModpack(newIntent: Intent): Intent {
+        val intent = intent
+        val action = intent.action
+        val data = intent.data
+
+        if (Intent.ACTION_VIEW == action && data != null) {
+            try {
+                val fileName = AndroidUtils.getFileName(this, data) ?: "modpack"
+                val cacheFile = File(cacheDir, fileName)
+                contentResolver.openInputStream(data)?.use { input ->
+                    cacheFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                newIntent.putExtra("modpack_cache_path", cacheFile.absolutePath)
+            } catch (e: Exception) {
+                Logging.LOG.log(
+                    Level.WARNING,
+                    "Failed to handle modpack intent: ${e.message}"
+                )
+            }
+        }
+        return newIntent
+    }
+
+    private fun requestPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = "package:$packageName".toUri()
+                    startActivityForResult(this) {
+                        checkPermission()
+                    }
+                }
+            } catch (_: Exception) {
+                startActivityForResult(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) {
+                    checkPermission()
+                }
+            }
+        } else {
+            if (!ActivityCompat.shouldShowRequestPermissionRationale(
+                    this,
+                    permission.WRITE_EXTERNAL_STORAGE
+                ) || !ActivityCompat.shouldShowRequestPermissionRationale(
+                    this,
+                    permission.READ_EXTERNAL_STORAGE
+                )
+            ) {
+                requestPermissions(
+                    arrayOf(
+                        permission.WRITE_EXTERNAL_STORAGE,
+                        permission.READ_EXTERNAL_STORAGE
+                    )
+                ) {
+                    checkPermission()
+                }
+            } else {
+                Toast.makeText(this, R.string.splash_permission_settings_msg, Toast.LENGTH_LONG)
+                    .show()
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = "package:$packageName".toUri()
+                    startActivityForResult(this) {
+                        checkPermission()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun hasPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager()
+        }
+        return ContextCompat.checkSelfPermission(
+            this,
+            permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(
+            this,
+            permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun initState() {
+        try {
+            gameFiles = RuntimeUtils.isLatest(
+                oldSelectedPath,
+                "/assets/.minecraft"
+            ) && !sharedPreferences.getBoolean("isFirstInstall", true)
+            configFiles = RuntimeUtils.isLatest(
+                FCLPath.CONFIG_DIR,
+                "/assets/app_config"
+            ) && gameFiles
+            lwjgl = RuntimeUtils.isLatest(
+                FCLPath.LWJGL_DIR,
+                "/assets/app_runtime/lwjgl"
+            )
+            cacio17 = RuntimeUtils.isLatest(
+                FCLPath.CACIOCAVALLO_17_DIR,
+                "/assets/app_runtime/caciocavallo17"
+            )
+            java17 = RuntimeUtils.isLatest(FCLPath.JAVA_17_PATH, "/assets/app_runtime/java/jre17")
+            jna = RuntimeUtils.isLatest(FCLPath.JNA_PATH, "/assets/app_runtime/jna")
+            if (!File(FCLPath.JAVA_PATH, "resolv.conf").exists()) {
+                FileUtils.writeText(
+                    File(FCLPath.JAVA_PATH + "/resolv.conf"),
+                    String.format(
+                        "nameserver %s\nnameserver %s",
+                        GENERAL_SETTING.getProperty("primary-nameserver", "119.29.29.29"),
+                        GENERAL_SETTING.getProperty("secondary-nameserver", "8.8.8.8")
+                    )
+                )
+            }
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+    }
+}
