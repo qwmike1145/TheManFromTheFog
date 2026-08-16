@@ -64,7 +64,7 @@ public class AboutPage extends FCLCommonPage implements View.OnClickListener {
             joinQQGroup(QQ_GROUP_KEY);
         }
         if (v == source) {
-            url = "https://github.com/root-S7/FoldCraftLauncher";
+            url = "https://github.com/qwmike1145/TheManFromTheFog";
         }
 
         if (url != null) {
