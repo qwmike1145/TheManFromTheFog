@@ -20,6 +20,7 @@ import com.tungsten.fcllibrary.component.view.FCLProgressBar;
 import com.tungsten.fcllibrary.component.view.FCLTextView;
 
 import java.io.IOException;
+import java.util.Locale;
 
 public class EulaFragment extends FCLFragment implements View.OnClickListener {
 
@@ -47,7 +48,33 @@ public class EulaFragment extends FCLFragment implements View.OnClickListener {
         new Thread(() -> {
             String str;
             try {
-                str = IOUtils.readFullyAsString(requireActivity().getAssets().open("eula.txt"));
+                // Get system default language
+                Locale locale = Locale.getDefault();
+                String language = locale.getLanguage();
+                String country = locale.getCountry();
+
+                String fileName;
+
+                // Check for Simplified Chinese (zh-CN)
+                if (language.equals("zh") && country.equals("CN")) {
+                    fileName = "eula_cn.txt";
+                }
+                // Check for Traditional Chinese (zh-TW, zh-HK, zh-MO)
+                else if (language.equals("zh") && (country.equals("TW") || country.equals("HK") || country.equals("MO"))) {
+                    fileName = "eula_hk.txt";
+                }
+                // Default to English for all other languages
+                else {
+                    fileName = "eula.txt";
+                }
+
+                // Try to load the selected file
+                try {
+                    str = IOUtils.readFullyAsString(requireActivity().getAssets().open(fileName));
+                } catch (IOException e) {
+                    // Fallback to English if the selected file doesn't exist
+                    str = IOUtils.readFullyAsString(requireActivity().getAssets().open("eula.txt"));
+                }
             } catch (IOException e) {
                 e.printStackTrace();
                 str = getString(R.string.splash_eula_error);
