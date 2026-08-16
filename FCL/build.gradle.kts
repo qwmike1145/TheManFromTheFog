@@ -44,8 +44,8 @@ android {
         applicationId = "com.wuzhongrentwo.bla"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1161
-        versionName = "1.16.1"
+        versionCode = 1170
+        versionName = "1.17.0"
     }
 
     androidResources {
